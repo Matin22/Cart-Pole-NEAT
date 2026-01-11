@@ -8,7 +8,7 @@ void processEvents(sf::Window &window)
         {
             window.close();
         }
-        
+
         else if (const auto* keyPressed = event->getIf<sf::Event::KeyPressed>())
         {
             if (keyPressed->scancode == sf::Keyboard::Scancode::Escape || keyPressed->scancode == sf::Keyboard::Scancode::Q)
