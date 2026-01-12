@@ -14,50 +14,12 @@
 
 namespace neat
 {
-    // Global curriculum state - tracks current difficulty
-    inline int g_currentGeneration = 0;
-    
     // Wrap angle to [-PI, PI]
     inline float wrapAngle(float theta)
     {
         while (theta > conf::PI) theta -= 2.f * conf::PI;
         while (theta < -conf::PI) theta += 2.f * conf::PI;
         return theta;
-    }
-
-    // Get curriculum phase index (0 to curriculumPhases-1)
-    inline int getCurriculumPhase(int generation)
-    {
-        int totalGens = trainingConf::generations;
-        int numPhases = trainingConf::curriculumPhases;
-        float fraction = trainingConf::phaseFraction;
-        
-        int gensPerPhase = static_cast<int>(totalGens * fraction);
-        if (gensPerPhase < 1) gensPerPhase = 1;
-        
-        int phase = generation / gensPerPhase;
-        return std::min(phase, numPhases - 1);
-    }
-
-    // Get curriculum difficulty (0 = easiest/top, 1 = hardest/bottom)
-    inline float getCurriculumDifficulty(int generation)
-    {
-        int phase = getCurriculumPhase(generation);
-        int numPhases = trainingConf::curriculumPhases;
-        
-        if (numPhases <= 1) return 0.0f;  // Single phase = top (easiest)
-        return static_cast<float>(phase) / static_cast<float>(numPhases - 1);
-    }
-
-    // Get starting angle based on curriculum progress
-    inline float getCurriculumStartAngle(int generation, std::mt19937 &rng)
-    {
-        std::uniform_real_distribution<float> noise(-0.15f, 0.15f);  // Small noise
-        
-        float difficulty = getCurriculumDifficulty(generation);
-        float baseAngle = conf::PI * (1.0f - difficulty);
-        
-        return baseAngle + noise(rng);
     }
 
     float evaluateGenome(
@@ -82,21 +44,22 @@ namespace neat
             Pendulum pendulum;
 
             // Start near center with small random offset
-            float x0 = xCenter + smallDist(rng) * (0.15f * xHalfRange);
-            float v0 = smallDist(rng) * 20.f;  // Small initial velocity
+            float x0 = xCenter + smallDist(rng) * (0.2f * xHalfRange);
+            float v0 = smallDist(rng) * 30.f;
             cart.reset(x0, v0);
 
-            // Start angle from curriculum + small perturbation
-            float theta0 = getCurriculumStartAngle(g_currentGeneration, rng);
-            float angularVel0 = smallDist(rng) * 0.3f;  // Small angular velocity
+            // Start pendulum at bottom (hanging down) with small perturbation
+            float theta0 = 0.f + smallDist(rng) * 0.2f;
+            float angularVel0 = smallDist(rng) * 0.5f;
             pendulum.reset(theta0, angularVel0);
 
             float fitness = 0.f;
             float timeBalanced = 0.f;
-            int stepsBalanced = 0;
+            
             std::vector<float> inputs(5, 0.f);
+            bool earlyTerminate = false;
 
-            for (int t = 0; t < trainingConf::maxStepsPerEpisode; t++)
+            for (int t = 0; t < trainingConf::maxStepsPerEpisode && !earlyTerminate; t++)
             {
                 float x = cart.getPos().x;
                 float vel = cart.getVelocity();
@@ -105,71 +68,71 @@ namespace neat
 
                 float thetaWrapped = wrapAngle(theta);
 
-                // Normalized inputs for neural network
-                float xNorm = (x - xCenter) / xHalfRange;        // [-1, 1]
-                float velNorm = vel / conf::CART_VELOCITY_MAX;   // ~[-1, 1]
-                float angularVelNorm = angularVel / 8.f;         // Normalized angular vel
+                // Normalized inputs
+                float xNorm = (x - xCenter) / xHalfRange;
+                float velNorm = vel / conf::CART_VELOCITY_MAX;
+                float angularVelNorm = angularVel / 10.f;
 
                 // Boundary check
                 if (x <= xMin || x >= xMax)
                 {
                     fitness -= trainingConf::boundHitPenalty;
+                    earlyTerminate = true;
                     break;
                 }
 
                 // Neural network inputs
                 inputs[0] = xNorm;
                 inputs[1] = velNorm;
-                inputs[2] = std::sin(thetaWrapped);  // Continuous angle representation
+                inputs[2] = std::sin(thetaWrapped);
                 inputs[3] = std::cos(thetaWrapped);
                 inputs[4] = angularVelNorm;
 
                 std::vector<float> outputs = forwardPass(genome, inputs);
                 float u = outputs.empty() ? 0.f : outputs[0];
+                if (!std::isfinite(u)) u = 0.f;
                 u = std::clamp(u, -1.f, 1.f);
+                
                 float accel = u * aMax;
 
                 cart.setAccelCommand(accel);
                 cart.update(conf::dt);
                 pendulum.update(conf::dt, cart.getAcceleration());
 
-                // === REWARD CALCULATION ===
+                // Safety clamp on angular velocity
+                if (!std::isfinite(pendulum.angularVel))
+                    pendulum.angularVel = 0.f;
+                else
+                    pendulum.angularVel = std::clamp(pendulum.angularVel, -30.f, 30.f);
+
+                // Reward calculation
                 float cosTheta = std::cos(thetaWrapped);
-                float sinTheta = std::sin(thetaWrapped);
+                float heightReward = -cosTheta;  // +1 at top, -1 at bottom
                 
-                // Upright reward: +1 when perfectly up, -1 when down
-                float upright = -cosTheta;
-                
-                // Squared penalties (smooth gradients)
-                float anglePenalty = sinTheta * sinTheta;           // 0 at top/bottom, 1 at horizontal
-                float angVelPenalty = angularVelNorm * angularVelNorm;
                 float posPenalty = xNorm * xNorm;
-                float velPenalty = velNorm * velNorm;
+                float angVelPenalty = angularVelNorm * angularVelNorm;
                 
-                // Check if balanced (within ~15 degrees of top and nearly still)
-                bool isBalanced = (upright > 0.96f) && (std::abs(angularVelNorm) < 0.1f);
+                bool isUpright = (heightReward > 0.95f);
+                bool isBalanced = isUpright && (std::abs(angularVelNorm) < 0.15f);
                 
                 if (isBalanced)
-                {
-                    stepsBalanced++;
                     timeBalanced += conf::dt;
-                }
+
+                float r = heightReward * 2.0f
+                        - 0.3f * posPenalty
+                        - 0.3f * angVelPenalty
+                        + (isBalanced ? 3.0f : 0.f);
                 
-                // Reward: heavily reward being upright and still
-                float r = 1.0f                          // Base survival reward
-                        + 2.0f * upright                // -2 to +2 based on angle
-                        + (isBalanced ? 3.0f : 0.f)     // Big bonus for being balanced
-                        - 0.5f * angVelPenalty          // Penalize spinning
-                        - 0.2f * posPenalty             // Stay centered
-                        - 0.1f * velPenalty;            // Don't move too fast
+                r += 0.1f;
+                r = std::clamp(r, -5.0f, 10.0f);
+
+                if (!std::isfinite(r))
+                    r = -10.f;
 
                 fitness += r;
             }
 
-            // Bonus for sustained balance
-            fitness += stepsBalanced * 0.5f;  // Extra reward per balanced step
-            fitness += timeBalanced * 10.f;   // Bonus for total balanced time
-
+            fitness += timeBalanced * 5.f;
             totalfitness += fitness;
         }
 

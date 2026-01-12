@@ -12,11 +12,60 @@
 
 namespace neat
 {
+    // Mutate a single random weight (called multiple times per generation)
+    int mutateSingleWeight(Genome &genome, std::mt19937 &rng)
+    {
+        if (genome.connections.empty())
+            return 0;
+            
+        std::uniform_real_distribution<float> uni01(0.f, 1.f);
+        std::uniform_real_distribution<float> wdist(mutConf::weightMin, mutConf::weightMax);
+        std::normal_distribution<float> largePerturbation(0.f, mutConf::perturbStd);
+        std::normal_distribution<float> smallPerturbation(0.f, mutConf::perturbSmall);
+        
+        // Pick a random enabled connection
+        std::vector<std::size_t> enabledIdx;
+        for (std::size_t i = 0; i < genome.connections.size(); i++)
+        {
+            if (genome.connections[i].enabled || mutConf::mutateDisabled)
+                enabledIdx.push_back(i);
+        }
+        
+        if (enabledIdx.empty())
+            return 0;
+            
+        std::uniform_int_distribution<std::size_t> pick(0, enabledIdx.size() - 1);
+        Connection &c = genome.connections[enabledIdx[pick(rng)]];
+        
+        float r = uni01(rng);
+        
+        if (r < mutConf::pReset)
+        {
+            // 10% - Complete reset to random value
+            c.weight = wdist(rng);
+        }
+        else if (r < mutConf::pReset + 0.20f)
+        {
+            // 20% - Large perturbation
+            c.weight += largePerturbation(rng);
+        }
+        else
+        {
+            // 70% - Small perturbation for fine-tuning
+            c.weight += smallPerturbation(rng);
+        }
+        
+        c.weight = std::clamp(c.weight, mutConf::weightMin, mutConf::weightMax);
+        return 1;
+    }
+
+    // Original function for compatibility - mutates all weights
     int mutateWeights(Genome &genome, std::mt19937 &rng)
     {
         std::uniform_real_distribution<float> uni01(0.f, 1.f);
         std::uniform_real_distribution<float> wdist(mutConf::weightMin, mutConf::weightMax);
-        std::normal_distribution<float> noise(0.f, mutConf::perturbStd);
+        std::normal_distribution<float> largePerturbation(0.f, mutConf::perturbStd);
+        std::normal_distribution<float> smallPerturbation(0.f, mutConf::perturbSmall);
 
         int mutated = 0;
 
@@ -29,13 +78,19 @@ namespace neat
 
             if (r < mutConf::pReset)
             {
+                // Complete reset
                 c.weight = wdist(rng);
                 mutated++;
             }
-
-            else if (r < (mutConf::pReset + mutConf::pPerturb))
+            else if (r < mutConf::pReset + mutConf::pPerturb)
             {
-                c.weight = std::clamp(c.weight + noise(rng), mutConf::weightMin, mutConf::weightMax);
+                // Perturbation - mix of large and small
+                if (uni01(rng) < 0.25f)
+                    c.weight += largePerturbation(rng);  // 25% large
+                else
+                    c.weight += smallPerturbation(rng); // 75% small
+                    
+                c.weight = std::clamp(c.weight, mutConf::weightMin, mutConf::weightMax);
                 mutated++;
             }
         }

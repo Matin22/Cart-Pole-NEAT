@@ -54,38 +54,9 @@ namespace neat
         tracker.reset(0);
 
         std::vector<Genome> population = initPop(tracker, rng);
-        
-        int lastPhase = -1;
-        float bestFitnessThisPhase = -1e30f;
 
         for (int gen = 0; gen < trainingConf::generations; gen++)
         {
-            // Update curriculum - this controls starting angle difficulty
-            g_currentGeneration = gen;
-            int currentPhase = getCurriculumPhase(gen);
-            
-            // When entering a new curriculum phase, reset phase-best tracking
-            // and re-evaluate the overall best genome on the new difficulty
-            if (currentPhase != lastPhase)
-            {
-                bestFitnessThisPhase = -1e30f;
-                
-                // Re-evaluate overall best on new phase to give it a fair comparison
-                if (report.bestFitness > -1e20f)
-                {
-                    float reEvalFitness = evaluateGenome(report.bestGenome, rng);
-                    std::cout << "  [Phase transition: re-evaluated best genome: " 
-                              << reEvalFitness << "]\n";
-                    
-                    // Inject the best genome back into population to compete
-                    if (!population.empty())
-                    {
-                        population[0] = report.bestGenome;
-                    }
-                }
-                lastPhase = currentPhase;
-            }
-            
             GenerationStats stats;
             Genome bestThisGen;
 
@@ -97,14 +68,6 @@ namespace neat
                 &stats,
                 &bestThisGen);
             
-            // Track best in this curriculum phase
-            if (stats.bestFitness > bestFitnessThisPhase)
-            {
-                bestFitnessThisPhase = stats.bestFitness;
-            }
-            
-            // Update overall best - but compare fairly within same evaluation context
-            // The fitness is already scaled by curriculum difficulty in evaluateGenome
             if (stats.bestFitness > report.bestFitness)
             {
                 report.bestFitness = stats.bestFitness;
@@ -113,17 +76,12 @@ namespace neat
 
             report.generationsRun = gen + 1;
 
-            // Show curriculum phase using configurable system
-            float difficulty = getCurriculumDifficulty(gen);
-            float startAngleDeg = 180.f * (1.0f - difficulty);  // For display
-
             std::cout
-                << "[gen " << gen << " | ~" << static_cast<int>(startAngleDeg) << "] "
+                << "[gen " << gen << "] "
                 << "best=" << stats.bestFitness
-                << " phaseBest=" << bestFitnessThisPhase
                 << " mean=" << stats.meanFitness
                 << " species=" << stats.speciesCount
-                << " overallBest=" << report.bestFitness
+                << " overall=" << report.bestFitness
                 << "\n";
 
             population = std::move(next);

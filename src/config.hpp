@@ -16,7 +16,7 @@ namespace conf
 
     // Pendulum Config
     inline constexpr float PENDULUM_LENGTH = 200.f;
-    inline constexpr float PENDULUM_FRICTION = 0.999f;  // Very low friction - natural swing
+    inline constexpr float PENDULUM_FRICTION = 0.999;  // Very low friction - natural swing
     inline constexpr float PENDULUM_RADIUS = 15.f;
     inline constexpr float PENDULUM_THICKNESS = 5.f;
     inline constexpr sf::Color PENDULUM_COLOR = sf::Color(220, 100, 80);
@@ -25,9 +25,9 @@ namespace conf
     inline constexpr float CART_WHEEL_RADIUS = 20.f;
     inline constexpr sf::Vector2f CART_OFFSET = {50.f, 30.f};
     inline constexpr float CART_PADDING = 75.f;
-    inline constexpr float CART_FRICTION = 0.99f;       // Low friction - smooth movement
-    inline constexpr float CART_VELOCITY_MAX = 1000.f;   // High enough for quick flicks
-    inline constexpr float CART_ACCELERATION_RATE = 500.f;  // Strong acceleration for swing-up
+    inline constexpr float CART_FRICTION = 0.997f;       // PBD-style friction coefficient
+    inline constexpr float CART_VELOCITY_MAX = 1000.f;    // Max cart velocity (units/sec)
+    inline constexpr float CART_ACCELERATION_RATE = 3000.f;  // Max cart acceleration
     inline constexpr float CART_THICKNESS = 15.f;
 
     // Rail config

@@ -65,7 +65,7 @@ int main()
     Cart myCart = Cart();
     Pendulum myPendulum = Pendulum();
     // myPendulum.reset(0.f, 0.f);  // Start pendulum hanging down (theta = 0)
-    myPendulum.reset(conf::PI, 0.f);
+    myPendulum.reset(0.f, 0.f);
     
     bool useAI = false;
     bool prevT = false;
@@ -98,7 +98,7 @@ int main()
             {
                 myCart.reset();
                 // myPendulum.reset(0.f, 0.f);  // Reset pendulum hanging down
-                myPendulum.reset(conf::PI, 0.f);
+                myPendulum.reset(0.f, 0.f);
             }
         }
         else

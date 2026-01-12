@@ -68,10 +68,13 @@ namespace neat
         std::vector<float> fitness(population.size(), 0.f);
 
         #ifdef _OPENMP
+        // Derive a stable base seed once to avoid racing on rng inside the parallel region
+        const unsigned int baseSeed = rng();
+
         #pragma omp parallel
         {
-            // Each thread gets its own RNG seeded differently
-            std::mt19937 threadRng(rng() + omp_get_thread_num());
+            // Each thread gets its own RNG seeded deterministically from the base seed
+            std::mt19937 threadRng(baseSeed + 9973u * static_cast<unsigned int>(omp_get_thread_num()));
             
             #pragma omp for schedule(dynamic)
             for (std::size_t i = 0; i < population.size(); i++)
@@ -107,8 +110,22 @@ namespace neat
 
         float shift = (minFit < 0.f) ? (-minFit + 1e-3f) : 0.f;
 
-        // --- Speciate ---
-        std::vector<Species> species = speciatePopulation(population);
+        // --- Speciate with adaptive threshold ---
+        float thresh = specConf::threshold;
+        std::vector<Species> species = speciatePopulation(population, thresh);
+        
+        // Adaptive re-speciation if too fragmented or collapsed
+        if (species.size() > static_cast<std::size_t>(specConf::maxSpecies))
+        {
+            thresh *= 1.3f; // raise threshold to merge species
+            species = speciatePopulation(population, thresh);
+        }
+        else if (species.size() < static_cast<std::size_t>(specConf::minSpecies) && population.size() > 10)
+        {
+            thresh *= 0.7f; // lower threshold to split species
+            species = speciatePopulation(population, thresh);
+        }
+        
         if (species.empty())
             return population;
         
@@ -198,26 +215,45 @@ namespace neat
         next.reserve(popN);
 
         std::uniform_real_distribution<float> uni01(0.f, 1.f);
+        
+        // === Global elites: preserve top performers across all species ===
+        std::vector<std::size_t> allIndices(population.size());
+        std::iota(allIndices.begin(), allIndices.end(), 0);
+        std::sort(allIndices.begin(), allIndices.end(),
+                  [&](std::size_t a, std::size_t b){ return fitness[a] > fitness[b]; });
+        
+        int globalEliteCount = static_cast<int>(evoConf::eliteRatio * popN);
+        globalEliteCount = std::max(1, std::min(globalEliteCount, static_cast<int>(population.size())));
+        
+        for (int e = 0; e < globalEliteCount && next.size() < popN; ++e)
+        {
+            next.push_back(population[allIndices[e]]);
+        }
 
+        // === Species-based offspring ===
         for (std::size_t si = 0; si < species.size(); ++si)
         {
             auto& members = species[si].members;
             if (members.empty())
                 continue;
 
-            // Sort members by fitness descending (for elites)
+            // Sort members by fitness descending
             std::sort(members.begin(), members.end(),
                       [&](std::size_t a, std::size_t b){ return fitness[a] > fitness[b]; });
 
             int nOff = offspringCount[si];
+            
+            // Account for global elites already added
+            int speciesElitesInGlobal = 0;
+            for (int e = 0; e < globalEliteCount; ++e)
+            {
+                if (std::find(members.begin(), members.end(), allIndices[e]) != members.end())
+                    speciesElitesInGlobal++;
+            }
+            nOff = std::max(0, nOff - speciesElitesInGlobal);
 
-            // copy best genomes unchanged (but don't exceed member count)
-            int nElite = std::min({evoConf::elitesPerSpecies, nOff, static_cast<int>(members.size())});
-            for (int e = 0; e < nElite && next.size() < popN; ++e)
-                next.push_back(population[members[e]]);
-
-            // Fill remaining offspring
-            for (int k = nElite; k < nOff && next.size() < popN; ++k)
+            // Fill offspring slots with crossover and mutation
+            for (int k = 0; k < nOff && next.size() < popN; ++k)
             {
                 if (members.empty())
                     break;
@@ -240,10 +276,22 @@ namespace neat
                         child = crossover(B, A, rng);
                 }
 
-                // Mutations
-                if (uni01(rng) < evoConf::pMutateWeights)  mutateWeights(child, rng);
-                if (uni01(rng) < evoConf::pAddConnection)  mutateAddConnection(child, tracker, rng);
-                if (uni01(rng) < evoConf::pAddNode)        mutateAddNode(child, tracker, rng);
+                // Mutations - apply multiple parametric mutations
+                if (uni01(rng) < evoConf::pMutateWeights)
+                {
+                    // Multiple weight mutations per genome (as per guide)
+                    for (int m = 0; m < mutConf::mutCount; ++m)
+                    {
+                        if (uni01(rng) < 0.5f)
+                            mutateSingleWeight(child, rng);
+                    }
+                    mutateWeights(child, rng);  // Also do full sweep occasionally
+                }
+                
+                if (uni01(rng) < evoConf::pAddConnection)  
+                    mutateAddConnection(child, tracker, rng);
+                if (uni01(rng) < evoConf::pAddNode)        
+                    mutateAddNode(child, tracker, rng);
 
                 next.push_back(std::move(child));
             }

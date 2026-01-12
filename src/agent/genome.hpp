@@ -24,7 +24,7 @@ namespace neat
     {
         int id = -1;
         NodeType type = NodeType::Hidden;
-        Activation activation = Activation::Tanh;
+        Activation activation = Activation::Relu;
     };
 
     struct Connection
