@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <random>
+#include <numeric>
 
 namespace neat
 {
@@ -84,22 +86,32 @@ namespace neat
     }
 
     std::vector<Species> speciatePopulation(
-        std::vector<Genome> &population
+        std::vector<Genome> &population,
+        float thresholdOverride = -1.0f
     )
     {
         std::vector<Species> species;
         species.reserve(population.size());
 
-        for (std::size_t i = 0; i < population.size(); i++)
+        float thresh = (thresholdOverride > 0.0f) ? thresholdOverride : specConf::threshold;
+
+        // Shuffle order to avoid always choosing the same representatives
+        std::vector<std::size_t> order(population.size());
+        std::iota(order.begin(), order.end(), 0);
+        // Use a deterministic shuffle to avoid potential random_device issues
+        std::mt19937 rng(1234567u);
+        std::shuffle(order.begin(), order.end(), rng);
+
+        for (std::size_t idx : order)
         {
             bool assigned = false;
 
             for (auto &s : species)
             {
-                float d = compatibilityDistance(population[i], population[s.representative]);
-                if (d < specConf::threshold)
+                float d = compatibilityDistance(population[idx], population[s.representative]);
+                if (d < thresh)
                 {
-                    s.members.push_back(i);
+                    s.members.push_back(idx);
                     assigned = true;
                     break;
                 }
@@ -108,9 +120,35 @@ namespace neat
             if (!assigned)
             {
                 Species s;
-                s.representative = i;
-                s.members.push_back(i);
+                s.representative = idx;
+                s.members.push_back(idx);
                 species.push_back(std::move(s));
+            }
+        }
+
+        // Fallback: ensure at least two species to maintain diversity
+        if (species.size() < 2 && population.size() > 1)
+        {
+            // Only split if first species has at least two members
+            if (!species.empty() && species[0].members.size() > 1)
+            {
+                Species second;
+                second.representative = order.size() > 1 ? order[1] : order[0];
+                // Move roughly half of members from the first species to the second
+                auto &firstMembers = species[0].members;
+                for (std::size_t i = 1; i < firstMembers.size(); i += 2)
+                {
+                    second.members.push_back(firstMembers[i]);
+                }
+                // Remove moved members from the first species
+                std::vector<std::size_t> keep;
+                keep.reserve(firstMembers.size());
+                for (std::size_t i = 0; i < firstMembers.size(); ++i)
+                {
+                    if (i % 2 == 0) keep.push_back(firstMembers[i]);
+                }
+                firstMembers.swap(keep);
+                species.push_back(std::move(second));
             }
         }
 
